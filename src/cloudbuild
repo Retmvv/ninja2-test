@@ -1,0 +1,249 @@
+#!/bin/bash
+# Copyright @ 2024- by Mengning Software
+ARGS=$(getopt --option hc::s::e:: --long easy::,clean, -- "$@")
+eval set -- "${ARGS}"
+
+deploy_ninja() {
+	aosp_path=$1
+	echo "start deploying client..."
+	sudo apt-get install -y git cmake g++ gcc googletest libgmock-dev libgoogle-glog-dev libssl-dev pkg-config uuid-dev grpc++ libprotobuf-dev protobuf-compiler-grpc libyaml-cpp-dev
+	if [ -L /usr/bin/ninja ]; then
+		sudo rm /usr/bin/ninja /usr/bin/ninja2
+		sudo cp ${PWD}/ninja2 /usr/bin/
+	else
+		sudo mv /usr/bin/ninja /usr/bin/pre_ninja
+	fi
+	sudo ln -s /usr/bin/ninja2 /usr/bin/ninja
+	if [ $aosp_path ]; then
+		echo aosp_path:$aosp_path
+		sudo systemctl restart nfs-kernel-server
+		(cd $aosp_path/prebuilts/build-tools/linux-x86/bin &&
+			echo "\$HOME/prebuilts" >aosp_path.conf &&
+			if [ -L ninja ]; then
+				rm -rf ninja android_ninja
+			else
+				mv ninja prebuilts-ninja
+			fi 
+		)
+		sudo cp ${PWD}/android_ninja $aosp_path/prebuilts/build-tools/linux-x86/bin/
+		(cd $aosp_path/prebuilts/build-tools/linux-x86/bin &&
+			ln -s android_ninja ninja 
+		)
+		(cd $aosp_path/build/soong/ui/build/ && 
+			if [ -f "ninja.go.bak" ]; then
+				cp ninja.go.bak ninja.go
+			else
+				cp ninja.go ninja.go.bak
+			fi
+		)
+		(cd $aosp_path/build/soong/ui/build/ &&
+			sed -i '/cmd.Sandbox = ninjaSandbox/s/^/\/\//' ninja.go
+		)
+		(cd $aosp_path/build/soong/ui/build/ &&
+			sed -i "/args := /a \
+\"-c\", \"grpc://127.0.0.1:1985\", \
+\"--aosp\"," ninja.go
+		) # \"-r\", \"${aosp_path}\",  \
+    fi
+}
+
+aosp_path=""
+if [ -f "aosp_path.conf" ]; then
+    aosp_path=$(<"aosp_path.conf")
+    echo "读取aosp_path.conf成功：$aosp_path"
+fi
+while true;
+do
+	case "$1" in
+		-h)
+			echo -e "Copyright @ 2024- by Mengning Software\n";
+			echo -e "Welcome to use the cloudbuild deployment script!\n";
+			echo -e "options:"
+			echo "  --clean    clean up"
+			echo "  --easy[=AOSP_PATH]    easy way to install client and server, if aosp project ex:--easy=/home/ubuntu/aosp14"
+			echo "  -c[AOSP_PATH]    install the client, if aosp project ex:-c/home/ubuntu/aosp14"
+			echo "  -s REDIS_IP    install the server and specify the address of the redis service"
+			echo "  -e SERVER_IP    install the compilation node and specify the address of the server"
+			echo "  -s    start the server without modifying the parameters"
+			echo "  -e    start the compilation node without modifying the parameters"
+			shift 1
+			break
+			;;
+		--clean)
+			rm -r $HOME/MyConfig aosp_path.conf
+			sudo docker stop executor master
+			sudo docker rm executor master
+			sudo docker volume rm nfs
+			echo "clean up！"
+			shift 1
+			break
+			;;
+		-c)
+			aosp_path="$2"
+			deploy_ninja $aosp_path
+			shift 1
+			break
+			;;
+		-s)
+			redis_ip="$2"
+			buddy_docker="devstar.cn/mengning/cloudbuild-master:1.0"
+			if [ ! -z $redis_ip ]; then
+				echo "start deploying server..."
+				echo "install dependencies..."
+				sudo apt-get update -y
+				sudo apt install -y docker.io
+				sudo docker pull $buddy_docker
+
+				if [ ! -d "$HOME/MyConfig" ]; then
+					mkdir -p ~/MyConfig
+				fi
+
+				cd ~/MyConfig
+
+				if [ ! -f "server.yaml" ]; then
+				echo "app:
+  no_default_user_group: true
+  create_group_per_user: true
+  add_user_to_domain_group: true
+  code_editor_enabled: true
+  default_redis_target: \"$redis_ip:9527\"
+  enable_target_tracking: true
+database:
+  data_source: \"sqlite3:///tmp/buildbuddy-enterprise.db\"
+#olap_database:
+#data_source: \"clickhouse://default:@127.0.0.1:9000/buildbuddy_local\"
+storage:
+  ttl_seconds: 86400 # One day in seconds.
+  disk:
+    root_directory: /tmp/buildbuddy_enterprise
+cache:
+  redis:
+	redis_target: \"$redis_ip:9527\"
+  disk:
+    root_directory: /tmp/buildbuddy-enterprise-cache
+auth:
+  enable_anonymous_usage: true
+  enable_self_auth: true" >server.yaml
+				else
+					sed -i "6c   \ \ default_redis_target: \"$redis_ip:9527\"" ~/MyConfig/server.yaml
+					sed -i "18c   \ \ \ \ redis_target: \"$redis_ip:9527\"" ~/MyConfig/server.yaml
+				fi
+			fi
+
+			if [ ! -f "$HOME/MyConfig/server.yaml" ]; then
+				echo "please deploy the server first!"
+				exit -1
+			fi
+
+			sudo docker run -it --name master -p 1985:1985 -v ~/MyConfig/server.yaml:/config.yaml $buddy_docker
+			shift 2
+			break
+			;;
+		-e)
+			server_ip="$2"
+			executor_docker="devstar.cn/mengning/cloudbuild-executor:1.0"
+			if [ ! -z $server_ip ]; then
+				echo "start deploying executor..."
+				echo "install dependencies..."
+				sudo apt-get update -y
+				sudo apt install -y docker.io
+				sudo docker pull $executor_docker
+
+				if [ ! -d "$HOME/MyConfig" ]; then
+					mkdir -p ~/MyConfig
+				fi
+				cd ~/MyConfig
+
+				if [ ! -f "executor.yaml" ]; then
+				echo "executor:
+  root_directory: \"/tmp/remote_build\"
+  docker_socket: \"\"
+  docker_inherit_user_ids: false
+  enable_firecracker: false
+  app_target: \"grpc://$server_ip:1985\"
+  local_cache_directory: \"/tmp/filecache\"
+  local_cache_size_bytes: 10000000000 # 10GB" >executor.yaml
+				else
+					sed -i "6c   \ \ app_target: \"grpc://$server_ip:1985\"" ~/MyConfig/executor.yaml
+				fi
+			fi
+
+			if [ ! -f "$HOME/MyConfig/executor.yaml" ]; then
+				echo "please deploy the executor first!"
+				exit -1
+			fi
+			if [ $aosp_path ]; then
+				echo server_ip:$server_ip aosp_path:$aosp_path
+				sudo apt-get install -y nfs-common
+				sudo docker volume create --driver local --opt type=nfs --opt o=addr=$server_ip,rw --opt device=:$aosp_path/prebuilts --name nfs
+				sudo docker run -e HOME=$aosp_path -it --name executor -v ~/MyConfig/executor.yaml:/config.yaml -v nfs:$aosp_path/prebuilts $executor_docker
+			else
+				sudo docker run -it --name executor -v ~/MyConfig/executor.yaml:/config.yaml $executor_docker
+			fi
+			shift 2
+			break
+			;;
+		 --easy)
+			echo "easy mode"
+			aosp_path="$2"
+			deploy_ninja $aosp_path
+
+			redis_ip=`ifconfig -a|grep inet|grep -v 127.0.0.1|grep -v inet6|awk '{print $2}' | tail -n 1`
+
+			if [ ! -f "/etc/redis/redis.conf" ]; then
+				sudo apt-get -y install redis
+			fi
+			cd /etc/redis
+			sudo sed -i "69c bind 127.0.0.1 $redis_ip  ::1" redis.conf
+			sudo sed -i "92c port 9527" redis.conf
+			sudo systemctl restart redis
+
+			buddy_docker="devstar.cn/mengning/cloudbuild-master:1.0"
+			echo "start deploying server..."
+			echo "install dependencies..."
+			sudo apt-get update -y
+			sudo apt install -y docker.io
+			sudo docker pull $buddy_docker
+
+			if [ ! -d "$HOME/MyConfig" ]; then
+				mkdir -p ~/MyConfig
+			fi
+			cd ~/MyConfig
+			if [ ! -f "server.yaml" ]; then
+				echo "app:
+  no_default_user_group: true
+  create_group_per_user: true
+  add_user_to_domain_group: true
+  code_editor_enabled: true
+  default_redis_target: \"$redis_ip:9527\"
+  enable_target_tracking: true
+database:
+  data_source: \"sqlite3:///tmp/buildbuddy-enterprise.db\"
+#olap_database:
+#data_source: \"clickhouse://default:@127.0.0.1:9000/buildbuddy_local\"
+storage:
+  ttl_seconds: 86400 # One day in seconds.
+  disk:
+    root_directory: /tmp/buildbuddy_enterprise
+cache:
+  redis:
+        redis_target: \"$redis_ip:9527\"
+  disk:
+    root_directory: /tmp/buildbuddy-enterprise-cache
+auth:
+  enable_anonymous_usage: true
+  enable_self_auth: true" >server.yaml
+			fi
+			sudo docker run -it --name master -p 1985:1985 -v ~/MyConfig/server.yaml:/config.yaml $buddy_docker
+
+			shift 1
+			break
+			;;
+		--)
+			echo "Please enter the correct parameters, enter -h to display the instructions."
+			shift
+			break
+			;;
+
+	esac
+done

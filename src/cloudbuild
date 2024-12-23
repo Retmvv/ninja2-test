@@ -93,14 +93,7 @@ do
 				sudo apt-get update -y
 				sudo apt install -y docker.io
 				sudo docker pull $buddy_docker
-
-				if [ ! -d "/home/MyConfig" ]; then
-					mkdir -p /home/MyConfig
-				fi
-
-				cd /home/MyConfig
-
-				if [ ! -f "server.yaml" ]; then
+          		mkdir -p ./MyConfig
 				echo "app:
   no_default_user_group: true
   create_group_per_user: true
@@ -123,19 +116,14 @@ cache:
     root_directory: /tmp/buildbuddy-enterprise-cache
 auth:
   enable_anonymous_usage: true
-  enable_self_auth: true" >server.yaml
-				else
-					sed -i "6c   \ \ default_redis_target: \"$redis_ip:9527\"" ~/MyConfig/server.yaml
-					sed -i "18c   \ \ \ \ redis_target: \"$redis_ip:9527\"" ~/MyConfig/server.yaml
-				fi
+  enable_self_auth: true" >./MyConfig/server.yaml
 			fi
-
-			if [ ! -f "/home/MyConfig/server.yaml" ]; then
+			if [ ! -f "./MyConfig/server.yaml" ]; then
 				echo "please deploy the server first!"
 				exit -1
 			fi
 
-			sudo docker run -it --name master -p 1985:1985 -v /home/MyConfig/server.yaml:/config.yaml $buddy_docker
+			sudo docker run -it --name master -p 1985:1985 -v ./MyConfig/server.yaml:/config.yaml $buddy_docker
 			shift 2
 			break
 			;;
@@ -149,12 +137,9 @@ auth:
 				sudo apt install -y docker.io
 				sudo docker pull $executor_docker
 
-				if [ ! -d "/home/MyConfig" ]; then
-					mkdir -p ~/MyConfig
+				if [ ! -d "./MyConfig" ]; then
+					mkdir -p ./MyConfig
 				fi
-				cd ~/MyConfig
-
-				if [ ! -f "executor.yaml" ]; then
 				echo "executor:
   root_directory: \"/tmp/remote_build\"
   docker_socket: \"\"
@@ -162,24 +147,13 @@ auth:
   enable_firecracker: false
   app_target: \"grpc://$server_ip:1985\"
   local_cache_directory: \"/tmp/filecache\"
-  local_cache_size_bytes: 10000000000 # 10GB" >executor.yaml
-				else
-					sed -i "6c   \ \ app_target: \"grpc://$server_ip:1985\"" ~/MyConfig/executor.yaml
-				fi
+  local_cache_size_bytes: 10000000000 # 10GB" >./MyConfig/executor.yaml
 			fi
-
-			if [ ! -f "/home/MyConfig/executor.yaml" ]; then
+			if [ ! -f "./MyConfig/executor.yaml" ]; then
 				echo "please deploy the executor first!"
 				exit -1
 			fi
-			if [ $aosp_path ]; then
-				echo server_ip:$server_ip aosp_path:$aosp_path
-				sudo apt-get install -y nfs-common
-				sudo docker volume create --driver local --opt type=nfs --opt o=addr=$server_ip,rw --opt device=:$aosp_path/prebuilts --name nfs
-				sudo docker run -e HOME=$aosp_path -it --name executor -v ~/MyConfig/executor.yaml:/config.yaml -v nfs:$aosp_path/prebuilts $executor_docker
-			else
-				sudo docker run -it --name executor -v /home/MyConfig/executor.yaml:/config.yaml $executor_docker
-			fi
+			sudo docker run -it --name executor -v /home/MyConfig/executor.yaml:/config.yaml $executor_docker
 			shift 2
 			break
 			;;

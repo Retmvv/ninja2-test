@@ -94,11 +94,11 @@ do
 				sudo apt install -y docker.io
 				sudo docker pull $buddy_docker
 
-				if [ ! -d "$HOME/MyConfig" ]; then
-					mkdir -p ~/MyConfig
+				if [ ! -d "/home/MyConfig" ]; then
+					mkdir -p /home/MyConfig
 				fi
 
-				cd ~/MyConfig
+				cd /home/MyConfig
 
 				if [ ! -f "server.yaml" ]; then
 				echo "app:
@@ -130,12 +130,12 @@ auth:
 				fi
 			fi
 
-			if [ ! -f "$HOME/MyConfig/server.yaml" ]; then
+			if [ ! -f "/home/MyConfig/server.yaml" ]; then
 				echo "please deploy the server first!"
 				exit -1
 			fi
 
-			sudo docker run -it --name master -p 1985:1985 -v ~/MyConfig/server.yaml:/config.yaml $buddy_docker
+			sudo docker run -it --name master -p 1985:1985 -v /home/MyConfig/server.yaml:/config.yaml $buddy_docker
 			shift 2
 			break
 			;;
@@ -149,7 +149,7 @@ auth:
 				sudo apt install -y docker.io
 				sudo docker pull $executor_docker
 
-				if [ ! -d "$HOME/MyConfig" ]; then
+				if [ ! -d "/home/MyConfig" ]; then
 					mkdir -p ~/MyConfig
 				fi
 				cd ~/MyConfig
@@ -168,7 +168,7 @@ auth:
 				fi
 			fi
 
-			if [ ! -f "$HOME/MyConfig/executor.yaml" ]; then
+			if [ ! -f "/home/MyConfig/executor.yaml" ]; then
 				echo "please deploy the executor first!"
 				exit -1
 			fi
@@ -178,7 +178,7 @@ auth:
 				sudo docker volume create --driver local --opt type=nfs --opt o=addr=$server_ip,rw --opt device=:$aosp_path/prebuilts --name nfs
 				sudo docker run -e HOME=$aosp_path -it --name executor -v ~/MyConfig/executor.yaml:/config.yaml -v nfs:$aosp_path/prebuilts $executor_docker
 			else
-				sudo docker run -it --name executor -v ~/MyConfig/executor.yaml:/config.yaml $executor_docker
+				sudo docker run -it --name executor -v /home/MyConfig/executor.yaml:/config.yaml $executor_docker
 			fi
 			shift 2
 			break
